@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A34A9F9F2E5A0A0C00341209 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A34A9F9E2E5A0A0C00341209 /* WhisperKit */; };
+		A34A9FA22E5A0A1C00341209 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = A34A9FA12E5A0A1C00341209 /* KeyboardShortcuts */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		A34A9F812E5A098600341209 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +57,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A34A9F9F2E5A0A0C00341209 /* WhisperKit in Frameworks */,
+				A34A9FA22E5A0A1C00341209 /* KeyboardShortcuts in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +119,8 @@
 			);
 			name = dicta;
 			packageProductDependencies = (
+				A34A9F9E2E5A0A0C00341209 /* WhisperKit */,
+				A34A9FA12E5A0A1C00341209 /* KeyboardShortcuts */,
 			);
 			productName = dicta;
 			productReference = A34A9F722E5A098500341209 /* dicta.app */;
@@ -195,6 +204,10 @@
 			);
 			mainGroup = A34A9F692E5A098500341209;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A34A9F9D2E5A0A0C00341209 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				A34A9FA02E5A0A1C00341209 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A34A9F732E5A098500341209 /* Products */;
 			projectDirPath = "";
@@ -399,6 +412,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Push‑to‑Transcribe needs access to your microphone to capture speech while you hold the shortcut.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -424,6 +438,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Push‑to‑Transcribe needs access to your microphone to capture speech while you hold the shortcut.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -541,6 +556,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A34A9F9D2E5A0A0C00341209 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		A34A9FA02E5A0A1C00341209 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sindresorhus/KeyboardShortcuts";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.3.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A34A9F9E2E5A0A0C00341209 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A34A9F9D2E5A0A0C00341209 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+		A34A9FA12E5A0A1C00341209 /* KeyboardShortcuts */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A34A9FA02E5A0A1C00341209 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
+			productName = KeyboardShortcuts;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A34A9F6A2E5A098500341209 /* Project object */;
 }

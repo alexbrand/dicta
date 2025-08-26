@@ -188,10 +188,12 @@ final class Transcriber: ObservableObject {
         do {
             tempFileURL = try makeTempAudioURL()
             let settings: [String: Any] = [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: 44100,
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 16_000,
                 AVNumberOfChannelsKey: 1,
-                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
             ]
             recorder = try AVAudioRecorder(url: tempFileURL!, settings: settings)
             recorder?.isMeteringEnabled = false

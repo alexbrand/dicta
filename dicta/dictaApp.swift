@@ -255,7 +255,11 @@ final class Transcriber: ObservableObject {
 
     private func transcribe(url: URL) async {
         setState(.transcribing)
-        defer { setState(.idle)}
+        defer {
+            setState(.idle)
+            try? FileManager.default.removeItem(at: url)
+            tempFileURL = nil
+        }
         do {
             // Whisper model should already be loaded at startup, but fallback if needed
             if whisper == nil {
@@ -273,9 +277,6 @@ final class Transcriber: ObservableObject {
                 notify("Transcription failed: \(error.localizedDescription)")
             }
         }
-        // Cleanup temp file
-        try? FileManager.default.removeItem(at: url)
-        tempFileURL = nil
     }
 
     private func insertIntoFrontApp(_ text: String) async {
@@ -285,9 +286,6 @@ final class Transcriber: ObservableObject {
         var originalItemsSnapshot: [NSPasteboardItem] = []
 
         if restoreClipboard {
-            // --- THIS IS THE FIX ---
-            // Create a deep copy of the pasteboard items instead of just referencing them.
-            // Each `NSPasteboardItem` must be a new instance.
             if let originalItems = pb.pasteboardItems {
                 for item in originalItems {
                     let newItem = NSPasteboardItem()

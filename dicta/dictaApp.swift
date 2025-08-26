@@ -197,7 +197,10 @@ final class Transcriber: ObservableObject {
     }
 
     func startPTT() async {
-        guard !isRecording else { return }
+        guard case .idle = state else {
+            notify("Busy transcribing. Try again in a moment.")
+            return
+        }
         
         do {
             try await checkMicrophonePermission()

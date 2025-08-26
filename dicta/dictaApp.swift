@@ -14,7 +14,6 @@ import Carbon.HIToolbox // for kVK_ANSI_V
 import ApplicationServices
 import os.log
 import UserNotifications
-import SwiftUI
 
 @main
 struct PushToTranscribeApp: App {
@@ -199,7 +198,6 @@ final class Transcriber: ObservableObject {
 
     func startPTT() async {
         guard !isRecording else { return }
-        setState(.recording)
         
         do {
             try await checkMicrophonePermission()
@@ -207,6 +205,8 @@ final class Transcriber: ObservableObject {
             notify("Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone.")
             return
         }
+        
+        setState(.recording)
 
         do {
             tempFileURL = try makeTempAudioURL()
@@ -387,7 +387,7 @@ final class Transcriber: ObservableObject {
 
     private func makeTempAudioURL() throws -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        let file = dir.appendingPathComponent("ptt-\(UUID().uuidString).m4a")
+        let file = dir.appendingPathComponent("ptt-\(UUID().uuidString).wav")
         return file
     }
 

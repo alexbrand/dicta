@@ -87,16 +87,14 @@ struct PushToTranscribeApp: App {
             .padding(12)
             .frame(width: 340)
             .onAppear {
-                Task {
-                    // Small delay to let the app settle
-                    try? await Task.sleep(for: .milliseconds(250))
-                    
-                    if !AXPerms.isTrusted {
+                axTrusted = AXPerms.isTrusted
+                if !axTrusted {
+                    Task {
                         _ = AXPerms.requestPromptOnce()
                         let trusted = await AXPerms.pollUntilTrusted()
-                        await MainActor.run { axTrusted = trusted }
-                    } else {
-                        await MainActor.run { axTrusted = true }
+                        await MainActor.run {
+                            axTrusted = trusted
+                        }
                     }
                 }
             }
@@ -290,7 +288,7 @@ final class Transcriber: ObservableObject {
 
     private func insertIntoFrontApp(_ text: String) async {
         guard !text.isEmpty else { return }
-
+        
         let pb = NSPasteboard.general
         var originalItemsSnapshot: [NSPasteboardItem] = []
 

@@ -412,7 +412,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Push‑to‑Transcribe needs access to your microphone to capture speech while you hold the shortcut.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dicta needs access to your microphone to capture speech while you hold the shortcut.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -438,7 +438,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Push‑to‑Transcribe needs access to your microphone to capture speech while you hold the shortcut.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dicta needs access to your microphone to capture speech while you hold the shortcut.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

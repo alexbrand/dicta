@@ -32,8 +32,11 @@ struct PushToTranscribeApp: App {
                         Button("Enable Accessibility…") {
                             let nowTrusted = AXPerms.requestPromptOnce()
                             if !nowTrusted { AXPerms.openSettings() }
-                            AXPerms.pollUntilTrusted { trusted in
-                                axTrusted = trusted
+                            Task {
+                                let trusted = await AXPerms.pollUntilTrusted()
+                                await MainActor.run {
+                                    axTrusted = trusted
+                                }
                             }
                         }
                         .buttonStyle(.borderedProminent)
@@ -65,25 +68,30 @@ struct PushToTranscribeApp: App {
                         } else {
                             let nowTrusted = AXPerms.requestPromptOnce()
                             if !nowTrusted { AXPerms.openSettings() }
-                            AXPerms.pollUntilTrusted { trusted in
-                                axTrusted = trusted
-                                if trusted { Task { await transcriber.startPTT() } }
+                            Task {
+                                let trusted = await AXPerms.pollUntilTrusted()
+                                await MainActor.run {
+                                    axTrusted = trusted
+                                }
                             }
                         }
                     }
                 }
                 .keyboardShortcut(.space, modifiers: [])
-
+                
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .padding(12)
             .frame(width: 340)
             .onAppear {
-                // Fire after app is active
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                Task {
+                    // Small delay to let the app settle
+                    try? await Task.sleep(for: .milliseconds(250))
+                    
                     if !AXPerms.isTrusted {
                         _ = AXPerms.requestPromptOnce()
-                        AXPerms.pollUntilTrusted { trusted in axTrusted = trusted }
+                        let trusted = await AXPerms.pollUntilTrusted()
+                        axTrusted = trusted
                     } else {
                         axTrusted = true
                     }
@@ -115,12 +123,18 @@ extension KeyboardShortcuts.Name {
 }
 
 // MARK: - Transcriber
+enum RecordingState {
+    case idle           // Ready to record
+    case recording      // Currently recording
+    case transcribing   // Processing the audio
+    case loadingModel   // Setting up Whisper
+    case error(String)  // Something went wrong
+}
 
 @MainActor
 final class Transcriber: ObservableObject {
-    @Published var isRecording = false
-    @Published var isTranscribing = false
-    @Published var isLoadingModel = false
+    @Published private(set) var state: RecordingState = .idle
+
     @Published var lastTranscript: String? = nil
     @Published var playEarcons = true
     @Published var restoreClipboard = true
@@ -130,18 +144,32 @@ final class Transcriber: ObservableObject {
 
     private var whisper: WhisperKit? // Keep the pipeline warm between runs
 
+    var isRecording: Bool {
+        if case .recording = state { return true }
+        return false
+    }
+        
     var statusText: String {
-        if isLoadingModel { return "Loading Whisper model…" }
-        if isRecording { return "Listening… (hold to speak)" }
-        if isTranscribing { return "Transcribing…" }
-        return "Ready"
+        switch state {
+        case .idle: return "Ready"
+        case .recording: return "Listening... (hold to speak)"
+        case .transcribing: return "Transcribing..."
+        case .loadingModel: return "Loading Whisper model..."
+        case .error(let message): return "Error: \(message)"
+        }
+    }
+    
+    private func setState(_ newState: RecordingState) {
+        state = newState
     }
 
     var menuIcon: String {
-        if isLoadingModel { return "arrow.down.circle" }
-        if isRecording { return "waveform" }
-        if isTranscribing { return "brain" }
-        return "mic"
+        switch state {
+            case .loadingModel: return "arrow.down.circle"
+            case .recording: return "waveform"
+            case .transcribing: return "brain"
+            default: return "mic"
+        }
     }
 
     init() {
@@ -158,8 +186,8 @@ final class Transcriber: ObservableObject {
     }
     
     private func loadWhisperModel() async {
-        isLoadingModel = true
-        defer { isLoadingModel = false }
+        setState(.loadingModel)
+        defer { setState(.idle) }
         
         do {
             whisper = try await WhisperKit(prewarm: true, load: true)
@@ -171,17 +199,13 @@ final class Transcriber: ObservableObject {
 
     func startPTT() async {
         guard !isRecording else { return }
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .notDetermined:
-            let granted = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-                AVCaptureDevice.requestAccess(for: .audio) { cont.resume(returning: $0) }
-            }
-            guard granted else { notify("Microphone access denied"); return }
-        case .denied, .restricted:
+        setState(.recording)
+        
+        do {
+            try await checkMicrophonePermission()
+        } catch {
             notify("Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone.")
             return
-        case .authorized: break
-        @unknown default: break
         }
 
         do {
@@ -197,7 +221,6 @@ final class Transcriber: ObservableObject {
             recorder = try AVAudioRecorder(url: tempFileURL!, settings: settings)
             recorder?.isMeteringEnabled = false
             recorder?.record()
-            isRecording = true
             if playEarcons { NSSound.start.play() }
         } catch {
             notify("Failed to start recording: \(error.localizedDescription)")
@@ -206,17 +229,33 @@ final class Transcriber: ObservableObject {
 
     func stopPTT() async {
         guard isRecording else { return }
+        defer { setState(.idle) }
         recorder?.stop()
-        isRecording = false
         if playEarcons { NSSound.stop.play() }
 
         guard let url = tempFileURL else { return }
         await transcribe(url: url)
     }
+    
+    private func checkMicrophonePermission() async throws {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestMicrophoneAccess()
+            guard granted else {
+                throw NSError(domain: "MicrophoneError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Access denied"])
+            }
+        case .denied, .restricted:
+            throw NSError(domain: "MicrophoneError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Access denied"])
+        case .authorized:
+            break
+        @unknown default:
+            break
+        }
+    }
 
     private func transcribe(url: URL) async {
-        isTranscribing = true
-        defer { isTranscribing = false }
+        setState(.transcribing)
+        defer { setState(.idle)}
         do {
             // Whisper model should already be loaded at startup, but fallback if needed
             if whisper == nil {
@@ -371,6 +410,16 @@ extension NSSound {
     static let stop: NSSound = .init(named: NSSound.Name("Submarine"))!
 }
 
+extension AVCaptureDevice {
+    static func requestMicrophoneAccess() async -> Bool {
+        await withCheckedContinuation { continuation in
+            requestAccess(for: .audio) { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+}
+
 import Cocoa
 import ApplicationServices
 
@@ -396,18 +445,18 @@ enum AXPerms {
             NSWorkspace.shared.open(url)
         }
     }
-
-    /// Poll until trusted or timeout; call on main.
+    
     static func pollUntilTrusted(timeout: TimeInterval = 120,
-                                 interval: TimeInterval = 0.8,
-                                 onChange: @escaping (Bool) -> Void) {
+                               interval: TimeInterval = 0.8) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
-        func tick() {
-            let trusted = isTrusted
-            onChange(trusted)
-            if trusted || Date() >= deadline { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: tick)
+        
+        while Date() < deadline {
+            if isTrusted {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(Int(interval * 1000)))
         }
-        tick()
+        
+        return false
     }
 }

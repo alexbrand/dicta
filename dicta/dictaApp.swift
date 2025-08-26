@@ -13,8 +13,7 @@ import WhisperKit
 import Carbon.HIToolbox // for kVK_ANSI_V
 import ApplicationServices
 import os.log
-
-
+import UserNotifications
 import SwiftUI
 
 @main
@@ -155,7 +154,7 @@ final class Transcriber: ObservableObject {
         }
         
         // Initialize Whisper model at startup
-        Task { await loadWhisperModel() }
+        Task(priority: .userInitiated) { await loadWhisperModel() }
     }
     
     private func loadWhisperModel() async {
@@ -354,10 +353,15 @@ final class Transcriber: ObservableObject {
     }
 
     private func notify(_ message: String) {
-        let note = NSUserNotification()
-        note.title = "Push‑to‑Transcribe"
-        note.informativeText = message
-        NSUserNotificationCenter.default.deliver(note)
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let mutable = UNMutableNotificationContent()
+            mutable.title = "Push-to-Transcribe"
+            mutable.body = message
+            let req = UNNotificationRequest(identifier: UUID().uuidString, content: mutable, trigger: nil)
+            center.add(req, withCompletionHandler: nil)
+        }
     }
 }
 

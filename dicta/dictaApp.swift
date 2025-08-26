@@ -1,10 +1,3 @@
-// PushToTranscribeApp.swift
-// Minimal menu bar MVP: push-to-talk -> record mic -> WhisperKit transcribe -> paste into front app
-// macOS 14+ (for WhisperKit, MenuBarExtra)
-// Dependencies (SPM):
-//  - WhisperKit: https://github.com/argmaxinc/WhisperKit
-//  - KeyboardShortcuts: https://github.com/sindresorhus/KeyboardShortcuts
-
 import SwiftUI
 import AVFoundation
 import AppKit
@@ -16,7 +9,7 @@ import os.log
 import UserNotifications
 
 extension Logger {
-    static let transcriber = Logger(subsystem: "com.your.bundleid", category: "Transcriber")
+    static let transcriber = Logger(subsystem: "brandlabs.Dicta", category: "Transcriber")
 }
 
 @main

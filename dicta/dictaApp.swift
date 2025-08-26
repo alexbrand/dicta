@@ -15,6 +15,10 @@ import ApplicationServices
 import os.log
 import UserNotifications
 
+extension Logger {
+    static let transcriber = Logger(subsystem: "com.your.bundleid", category: "Transcriber")
+}
+
 @main
 struct PushToTranscribeApp: App {
     @StateObject private var transcriber = Transcriber()
@@ -90,9 +94,9 @@ struct PushToTranscribeApp: App {
                     if !AXPerms.isTrusted {
                         _ = AXPerms.requestPromptOnce()
                         let trusted = await AXPerms.pollUntilTrusted()
-                        axTrusted = trusted
+                        await MainActor.run { axTrusted = trusted }
                     } else {
-                        axTrusted = true
+                        await MainActor.run { axTrusted = true }
                     }
                 }
             }
@@ -192,7 +196,7 @@ final class Transcriber: ObservableObject {
             whisper = try await WhisperKit(prewarm: true, load: true)
         } catch {
             // Log the error but don't crash the app
-            print("Failed to load Whisper model: \(error.localizedDescription)")
+            Logger.transcriber.debug("Failed to load Whisper model: \(error.localizedDescription)")
         }
     }
 
@@ -206,6 +210,7 @@ final class Transcriber: ObservableObject {
             try await checkMicrophonePermission()
         } catch {
             notify("Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone.")
+            NSWorkspace.shared.open(URL(string:"x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
             return
         }
         
@@ -234,6 +239,7 @@ final class Transcriber: ObservableObject {
         guard isRecording else { return }
         defer { setState(.idle) }
         recorder?.stop()
+        recorder = nil
         if playEarcons { NSSound.stop.play() }
 
         guard let url = tempFileURL else { return }
@@ -266,11 +272,11 @@ final class Transcriber: ObservableObject {
         do {
             // Whisper model should already be loaded at startup, but fallback if needed
             if whisper == nil {
-                whisper = try await WhisperKit()
+                whisper = try await WhisperKit(prewarm: true, load: true)
             }
             let text = try await whisper?.transcribe(audioPath: url.path)?.text ?? ""
             lastTranscript = text
-            print(text)
+            Logger.transcriber.debug("transcribed to: \(text)")
             await insertIntoFrontApp(text)
         } catch {
             let nserr = error as NSError
@@ -314,9 +320,7 @@ final class Transcriber: ObservableObject {
         do {
             try synthesizeCommandV()
         } catch {
-            // Log or surface the error to the user
-            os_log("synthesizeCommandV failed: %{public}@", String(describing: error))
-            // e.g., show a one-shot alert guiding the user to enable Accessibility
+            Logger.transcriber.error("synthesizeCommandV failed: \(String(describing: error))")
         }
 
         // Restore the clipboard using our snapshot
@@ -367,7 +371,7 @@ final class Transcriber: ObservableObject {
         }
 
         // 3) Build keyDown/keyUp for V (kVK_ANSI_V == 0x09).
-        let vKey: CGKeyCode = 0x09
+        let vKey: CGKeyCode = CGKeyCode(kVK_ANSI_V)
         guard
             let keyDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
             let keyUp   = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)

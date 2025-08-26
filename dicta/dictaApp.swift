@@ -289,6 +289,13 @@ final class Transcriber: ObservableObject {
     private func insertIntoFrontApp(_ text: String) async {
         guard !text.isEmpty else { return }
         
+        // Check if there's an active input field before attempting to paste
+        guard hasActiveInputField() else {
+            Logger.transcriber.debug("No active input field found, skipping paste")
+            notify("No active input field found for pasting")
+            return
+        }
+        
         let pb = NSPasteboard.general
         var originalItemsSnapshot: [NSPasteboardItem] = []
 
@@ -332,6 +339,88 @@ final class Transcriber: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Checks if there's an active input field in the foreground application
+    private func hasActiveInputField() -> Bool {
+        // Get the frontmost application
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication,
+              let runningApp = NSRunningApplication(processIdentifier: frontmostApp.processIdentifier) else {
+            return false
+        }
+        
+        // Create an accessibility element for the application
+        let appElement = AXUIElementCreateApplication(runningApp.processIdentifier)
+        
+        // Try to get the focused element
+        var focusedElement: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
+        
+        guard result == .success, let element = focusedElement else {
+            return false
+        }
+        
+        // Check if the focused element accepts text input
+        return isTextInputElement(element as! AXUIElement)
+    }
+    
+    /// Checks if an accessibility element accepts text input
+    private func isTextInputElement(_ element: AXUIElement) -> Bool {
+        // Get the role of the element
+        var role: CFTypeRef?
+        let roleResult = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+        
+        guard roleResult == .success, let elementRole = role as? String else {
+            return false
+        }
+        
+        // Check for common text input roles
+        let textInputRoles: Set<String> = [
+            kAXTextFieldRole,
+            kAXTextAreaRole,
+            kAXComboBoxRole,
+            kAXStaticTextRole // Some apps use this for editable text
+        ]
+        
+        if textInputRoles.contains(elementRole) {
+            // Additional check: verify the element supports text insertion
+            var insertionPoint: CFTypeRef?
+            let insertionResult = AXUIElementCopyAttributeValue(element, kAXInsertionPointLineNumberAttribute as CFString, &insertionPoint)
+            
+            // If we can get insertion point info, it's likely a text field
+            // Also check if the element has a value attribute (common for text fields)
+            var value: CFTypeRef?
+            let valueResult = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
+            
+            return insertionResult == .success || valueResult == .success
+        }
+        
+        // Check if it's a web content area (common in browsers)
+        if elementRole == "AXWebArea" {
+            // In web areas, look for focused text input elements
+            return hasTextInputInWebArea(element)
+        }
+        
+        return false
+    }
+    
+    /// Checks if a web area contains a focused text input element
+    private func hasTextInputInWebArea(_ webArea: AXUIElement) -> Bool {
+        // For web areas, we'll use a simplified approach
+        // Check if the web area itself can receive text input
+        var value: CFTypeRef?
+        let valueResult = AXUIElementCopyAttributeValue(webArea, kAXValueAttribute as CFString, &value)
+        
+        // If the web area has editable content, it can likely receive text
+        if valueResult == .success {
+            return true
+        }
+        
+        // Also check if it has selected text (indicating a text cursor)
+        var selectedText: CFTypeRef?
+        let selectedTextResult = AXUIElementCopyAttributeValue(webArea, kAXSelectedTextAttribute as CFString, &selectedText)
+        
+        return selectedTextResult == .success
     }
 
     enum KeystrokeError: LocalizedError {

@@ -10,16 +10,37 @@ import AVFoundation
 import AppKit
 import KeyboardShortcuts
 import WhisperKit
+import Carbon.HIToolbox // for kVK_ANSI_V
+import ApplicationServices
+import os.log
+
+
+import SwiftUI
 
 @main
 struct PushToTranscribeApp: App {
     @StateObject private var transcriber = Transcriber()
+    @State private var axTrusted = AXPerms.isTrusted
 
     var body: some Scene {
-        MenuBarExtra("PushToTranscribe", systemImage: transcriber.menuIcon) {
+        MenuBarExtra("PushToTranscribe", systemImage: "mic") {
             VStack(alignment: .leading, spacing: 8) {
-                Label(transcriber.statusText, systemImage: transcriber.menuIcon)
-                    .font(.headline)
+                HStack {
+                    Label(transcriber.statusText, systemImage: transcriber.menuIcon)
+                        .font(.headline)
+                    Spacer()
+                    if !axTrusted {
+                        Button("Enable Accessibility…") {
+                            let nowTrusted = AXPerms.requestPromptOnce()
+                            if !nowTrusted { AXPerms.openSettings() }
+                            AXPerms.pollUntilTrusted { trusted in
+                                axTrusted = trusted
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                }
+
                 if let last = transcriber.lastTranscript, !last.isEmpty {
                     Text(last)
                         .font(.body)
@@ -29,32 +50,55 @@ struct PushToTranscribeApp: App {
                         .background(Color(NSColor.textBackgroundColor))
                         .cornerRadius(8)
                 }
+
                 Divider()
-                KeyboardShortcuts.Recorder("Push‑to‑Talk Shortcut:", name: .pushToTalk)
+                KeyboardShortcuts.Recorder("Push-to-Talk Shortcut:", name: .pushToTalk)
                 Toggle("Play start/stop sounds", isOn: $transcriber.playEarcons)
                 Toggle("Restore clipboard after paste", isOn: $transcriber.restoreClipboard)
+
                 Divider()
                 Button(transcriber.isRecording ? "Stop Recording" : "Start Recording") {
                     if transcriber.isRecording {
                         Task { await transcriber.stopPTT() }
                     } else {
-                        Task { await transcriber.startPTT() }
+                        if AXPerms.isTrusted {
+                            Task { await transcriber.startPTT() }
+                        } else {
+                            let nowTrusted = AXPerms.requestPromptOnce()
+                            if !nowTrusted { AXPerms.openSettings() }
+                            AXPerms.pollUntilTrusted { trusted in
+                                axTrusted = trusted
+                                if trusted { Task { await transcriber.startPTT() } }
+                            }
+                        }
                     }
                 }
-                .keyboardShortcut(.space, modifiers: []) // enables Space while menu open
+                .keyboardShortcut(.space, modifiers: [])
+
                 Button("Quit") { NSApp.terminate(nil) }
             }
             .padding(12)
             .frame(width: 340)
+            .onAppear {
+                // Fire after app is active
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if !AXPerms.isTrusted {
+                        _ = AXPerms.requestPromptOnce()
+                        AXPerms.pollUntilTrusted { trusted in axTrusted = trusted }
+                    } else {
+                        axTrusted = true
+                    }
+                }
+            }
         }
         .menuBarExtraStyle(.window)
+
         Settings {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Push‑to‑Transcribe")
-                    .font(.title2).bold()
+                Text("Push-to-Transcribe").font(.title2).bold()
                 Text("Hold the shortcut to record. Release to insert the transcript where your cursor is.")
                     .foregroundStyle(.secondary)
-                KeyboardShortcuts.Recorder("Push‑to‑Talk Shortcut:", name: .pushToTalk)
+                KeyboardShortcuts.Recorder("Push-to-Talk Shortcut:", name: .pushToTalk)
                 Toggle("Play start/stop sounds", isOn: $transcriber.playEarcons)
                 Toggle("Restore clipboard after paste", isOn: $transcriber.restoreClipboard)
                 Spacer()
@@ -64,6 +108,7 @@ struct PushToTranscribeApp: App {
         }
     }
 }
+
 
 extension KeyboardShortcuts.Name {
     // Default: ⌥⌘Space (you can change it in the menu)
@@ -76,6 +121,7 @@ extension KeyboardShortcuts.Name {
 final class Transcriber: ObservableObject {
     @Published var isRecording = false
     @Published var isTranscribing = false
+    @Published var isLoadingModel = false
     @Published var lastTranscript: String? = nil
     @Published var playEarcons = true
     @Published var restoreClipboard = true
@@ -86,12 +132,14 @@ final class Transcriber: ObservableObject {
     private var whisper: WhisperKit? // Keep the pipeline warm between runs
 
     var statusText: String {
+        if isLoadingModel { return "Loading Whisper model…" }
         if isRecording { return "Listening… (hold to speak)" }
         if isTranscribing { return "Transcribing…" }
-        return "Idle"
+        return "Ready"
     }
 
     var menuIcon: String {
+        if isLoadingModel { return "arrow.down.circle" }
         if isRecording { return "waveform" }
         if isTranscribing { return "brain" }
         return "mic"
@@ -104,6 +152,21 @@ final class Transcriber: ObservableObject {
         }
         KeyboardShortcuts.onKeyUp(for: .pushToTalk) { [weak self] in
             Task { await self?.stopPTT() }
+        }
+        
+        // Initialize Whisper model at startup
+        Task { await loadWhisperModel() }
+    }
+    
+    private func loadWhisperModel() async {
+        isLoadingModel = true
+        defer { isLoadingModel = false }
+        
+        do {
+            whisper = try await WhisperKit(prewarm: true, load: true)
+        } catch {
+            // Log the error but don't crash the app
+            print("Failed to load Whisper model: \(error.localizedDescription)")
         }
     }
 
@@ -154,8 +217,8 @@ final class Transcriber: ObservableObject {
         isTranscribing = true
         defer { isTranscribing = false }
         do {
+            // Whisper model should already be loaded at startup, but fallback if needed
             if whisper == nil {
-                // Initialize with default model (auto-downloads a suitable CoreML Whisper)
                 whisper = try await WhisperKit()
             }
             let text = try await whisper?.transcribe(audioPath: url.path)?.text ?? ""
@@ -179,44 +242,107 @@ final class Transcriber: ObservableObject {
         guard !text.isEmpty else { return }
 
         let pb = NSPasteboard.general
-        var snapshot: [NSPasteboardItem] = []
+        var originalItemsSnapshot: [NSPasteboardItem] = []
+
         if restoreClipboard {
-            snapshot = pb.pasteboardItems ?? []
-        }
-
-        pb.clearContents()
-        pb.setString(text, forType: .string)
-
-        synthesizeCommandV()
-
-        // Allow paste to happen, then restore clipboard
-        if restoreClipboard {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                pb.clearContents()
-                // Rebuild items (best-effort)
-                for item in snapshot {
+            // --- THIS IS THE FIX ---
+            // Create a deep copy of the pasteboard items instead of just referencing them.
+            // Each `NSPasteboardItem` must be a new instance.
+            if let originalItems = pb.pasteboardItems {
+                for item in originalItems {
                     let newItem = NSPasteboardItem()
+                    // Copy all the data types from the original item to our new snapshot item.
                     for type in item.types {
                         if let data = item.data(forType: type) {
                             newItem.setData(data, forType: type)
                         }
                     }
-                    pb.writeObjects([newItem])
+                    originalItemsSnapshot.append(newItem)
+                }
+            }
+        }
+
+        // Now, we can safely modify the pasteboard because we have our own copy
+        // of the original data, completely disconnected from the pasteboard system.
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+
+        // Wait for the previous app to regain focus
+        try? await Task.sleep(for: .milliseconds(100))
+        
+        do {
+            try synthesizeCommandV()
+        } catch {
+            // Log or surface the error to the user
+            os_log("synthesizeCommandV failed: %{public}@", String(describing: error))
+            // e.g., show a one-shot alert guiding the user to enable Accessibility
+        }
+
+        // Restore the clipboard using our snapshot
+        if restoreClipboard {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                // Safety check: only restore if the user hasn't copied something else
+                if pb.string(forType: .string) == text {
+                    pb.clearContents()
+                    // This is now safe because originalItemsSnapshot contains new items
+                    pb.writeObjects(originalItemsSnapshot)
                 }
             }
         }
     }
 
-    private func synthesizeCommandV() {
-        // Respect Secure Event Input: CGEventPost simply fails in secure fields
-        guard let src = CGEventSource(stateID: .hidSystemState) else { return }
-        let vKey: CGKeyCode = 0x09 // kVK_ANSI_V
-        let keyDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true)
-        keyDown?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        let keyUp = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyUp?.post(tap: .cghidEventTap)
+    enum KeystrokeError: LocalizedError {
+        case accessibilityNotTrusted
+        case eventSourceUnavailable
+        case keyEventCreationFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .accessibilityNotTrusted:
+                return "Accessibility permission is not granted. Enable your app in System Settings → Privacy & Security → Accessibility."
+            case .eventSourceUnavailable:
+                return "Failed to create a CGEventSource for HID system state."
+            case .keyEventCreationFailed:
+                return "Failed to create the key-down/up CGEvent."
+            }
+        }
+    }
+    
+    /// Synthesizes ⌘V (Paste). Throws if preconditions fail.
+    /// - Parameter promptForAXIfNeeded: If true, macOS will show the system prompt to grant Accessibility.
+    func synthesizeCommandV(promptForAXIfNeeded: Bool = true) throws {
+        // 1) Check Accessibility trust (TCC “Accessibility”). Without this, posting events is blocked.
+        let opts: CFDictionary = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: promptForAXIfNeeded as CFBoolean
+        ] as CFDictionary
+
+        if !AXIsProcessTrustedWithOptions(opts) {
+            throw KeystrokeError.accessibilityNotTrusted
+        }
+
+        // 2) Create an event source that looks like real HID input.
+        guard let src = CGEventSource(stateID: .hidSystemState) else {
+            throw KeystrokeError.eventSourceUnavailable
+        }
+
+        // 3) Build keyDown/keyUp for V (kVK_ANSI_V == 0x09).
+        let vKey: CGKeyCode = 0x09
+        guard
+            let keyDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
+            let keyUp   = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
+        else {
+            throw KeystrokeError.keyEventCreationFailed
+        }
+
+        // Apply Command modifier for ⌘V
+        keyDown.flags = .maskCommand
+        keyUp.flags   = .maskCommand
+
+        // 4) Post the events. (No failure signal from API; preflight + throws above are your guard rails.)
+        keyDown.post(tap: .cghidEventTap)
+        // Small delay to help some apps reliably register the stroke.
+        usleep(10_000) // 10 ms
+        keyUp.post(tap: .cghidEventTap)
     }
 
     private func makeTempAudioURL() throws -> URL {
@@ -239,93 +365,43 @@ extension NSSound {
     static let stop: NSSound = .init(named: NSSound.Name("Submarine"))!
 }
 
+import Cocoa
+import ApplicationServices
 
-// =============================
-// Info.plist (drop into your Xcode app target)
-// =============================
-/*
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>$(EXECUTABLE_NAME)</string>
-    <key>CFBundleIdentifier</key>
-    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>PushToTranscribe</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <!-- Run as agent: menu bar only, hide Dock icon -->
-    <key>LSUIElement</key>
-    <true/>
-    <!-- Mic permission prompt text -->
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Push‑to‑Transcribe needs access to your microphone to capture speech while you hold the shortcut.</string>
-</dict>
-</plist>
-*/
-
-// =============================
-// PushToTranscribe.entitlements (macOS sandbox)
-// =============================
-/*
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-    <key>com.apple.security.device.audio-input</key>
-    <true/>
-    <!-- Required for model download and HTTPS calls (WhisperKit → Hugging Face) -->
-    <key>com.apple.security.network.client</key>
-    <true/>
-</dict>
-</plist>
-*/
-
-// =============================
-// README (setup notes)
-// =============================
-/*
-# Push-to-Transcribe (Whisper) — Minimal MVP
-
-## Requirements
-- macOS 14+
-- Xcode 15+
-
-## Add dependencies (SPM)
-1. In Xcode: File → Add Package Dependencies…
-2. Add:
-   - https://github.com/argmaxinc/WhisperKit (latest)
-   - https://github.com/sindresorhus/KeyboardShortcuts (latest)
-
-## App configuration
-- Set Deployment Target to **macOS 14.0** or newer (WhisperKit requirement).
-- Add the provided **Info.plist** contents (make sure `LSUIElement` is `true`).
-- Add a macOS **Sandbox** and enable:
-  - **Microphone** → `com.apple.security.device.audio-input`
-  - **Outgoing Connections (Client)** → `com.apple.security.network.client`
-- Build & Run. On first use, grant **Microphone** access. No Accessibility permission is needed for paste-based insertion.
-
-## Usage
-- Default hotkey is **⌥⌘Space**. Hold to record, release to paste the transcript where your cursor is.
-- Change the shortcut from the menu bar popover or Settings.
-
-## Notes
-- This MVP transcribes *after* you release the key. WhisperKit will download a suitable model on first run.
-- If you want live partials or AX insert, extend `Transcriber.insertIntoFrontApp` and add AX APIs.
-*/
+enum AXPerms {
+    /// Non-prompting read of current state.
+    static var isTrusted: Bool {
+        AXIsProcessTrusted()
+    }
 
 
+    /// Try to show the one-time system prompt.
+    /// Returns true if already trusted; false if not trusted (prompt may or may not appear).
+    @discardableResult
+    static func requestPromptOnce() -> Bool {
+        let opts: CFDictionary = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true as CFBoolean
+        ] as CFDictionary
+        return AXIsProcessTrustedWithOptions(opts)
+    }
+
+    static func openSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Poll until trusted or timeout; call on main.
+    static func pollUntilTrusted(timeout: TimeInterval = 120,
+                                 interval: TimeInterval = 0.8,
+                                 onChange: @escaping (Bool) -> Void) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func tick() {
+            let trusted = isTrusted
+            onChange(trusted)
+            if trusted || Date() >= deadline { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: tick)
+        }
+        tick()
+    }
+}
